@@ -207,14 +207,12 @@
             const newBtn = downloadAllOriginalsBtn.cloneNode(true);
             downloadAllOriginalsBtn.parentNode.replaceChild(newBtn, downloadAllOriginalsBtn);
             
+            // Format vergadering name for URL
+            const formattedVergadering = vergadering.replace(/\s+/g, '_');
+            
             newBtn.addEventListener('click', function() {
-                // Get all original file URLs
-                const originalLinks = document.querySelectorAll('.document-original a');
-                
-                // Open each link in a new tab
-                originalLinks.forEach(link => {
-                    window.open(link.href, '_blank');
-                });
+                const downloadUrl = `https://pdf-summary.ams3.digitaloceanspaces.com/${gemeente}/${formattedVergadering}/${gemeente}_${formattedVergadering}.zip`;
+                window.open(downloadUrl, '_blank');
             });
         }
 
