@@ -82,57 +82,169 @@
                     setLoading(true);
                     updateStatusMessage("Resultaten ophalen...");
                     
-                    const response = await fetch(`https://pdf-summary.ams3.digitaloceanspaces.com/${jobId}.json`);
+                    // Log the URL we're trying to fetch for debugging
+                    const dataUrl = `https://pdf-summary.ams3.digitaloceanspaces.com/${jobId}.json`;
+                    console.log("Job ID detected:", jobId);
+                    console.log("Data URL:", dataUrl);
                     
-                    if (!response.ok) {
-                        throw new Error('Ongeldig job ID of resultaten niet gevonden');
-                    }
+                    let data = null;
                     
-                    const data = await response.json();
-                    
-                    // Fill in the gemeente field
-                    document.getElementById('gemeente-input').value = data.gemeente;
-                    
-                    // Create results interface
-                    const container = document.getElementById('item-container');
-                    container.innerHTML = '';
-                    
-                    // Show the status container with current progress
-                    document.getElementById('status-container').style.display = 'block';
-                    
-                    if (data.results && data.results.length > 0) {
-                        // Filter out the ZIP Archive entry
-                        const documents = data.results.filter(item => item.title !== "ZIP Archive of Summaries");
-                        
-                        // Extract document URLs
-                        const documentUrls = await fetchOriginalDocumentUrls(data.gemeente, data.vergadering);
-                        
-                        documents.forEach(item => {
-                            // Create items with the original URLs when available
-                            const originalUrl = documentUrls[item.title] || '';
-                            container.appendChild(createItem(item.title, originalUrl, data.vergadering));
+                    // Try API proxy first
+                    try {
+                        console.log("Trying to fetch through API proxy");
+                        const response = await fetch(`https://pdf-summary-7oczl.ondigitalocean.app/summarize-pdfs/jobs/${jobId}`, {
+                            method: 'GET',
+                            headers: {
+                                'Accept': 'application/json'
+                            }
                         });
                         
-                        // Update progress
-                        updateProgressBar(data.progress, data.total);
-                        updateStatusMessage(`Status: ${data.status}`);
-                        
-                        // Enable download buttons
-                        enableDownloadAllSummaries(data.gemeente, data.vergadering);
-                        
-                        if (documentUrls && Object.keys(documentUrls).length > 0) {
-                            enableDownloadAllOriginals(data.gemeente, data.vergadering);
+                        if (response.ok) {
+                            data = await response.json();
+                            console.log("Successfully fetched data through API proxy");
+                        } else {
+                            console.error('API proxy response not ok:', response.status, response.statusText);
+                            
+                            // Try alternative API endpoint
+                            console.log("Trying alternative proxy endpoint");
+                            const alternativeResponse = await fetch(`https://pdf-summary-7oczl.ondigitalocean.app/job/${jobId}`, {
+                                method: 'GET',
+                                headers: {
+                                    'Accept': 'application/json'
+                                }
+                            });
+                            
+                            if (alternativeResponse.ok) {
+                                data = await alternativeResponse.json();
+                                console.log("Successfully fetched data through alternative proxy endpoint");
+                            } else {
+                                console.error('Alternative proxy response not ok:', alternativeResponse.status, alternativeResponse.statusText);
+                            }
                         }
-                        
-                        // Update summary links
-                        updateSummaryLinks(data.results);
+                    } catch (proxyError) {
+                        console.error("Proxy fetch error:", proxyError);
                     }
                     
+                    // If API proxy fails, give direct download instructions
+                    if (!data) {
+                        // Show direct access instructions
+                        updateStatusMessage(`
+                            <div class="manual-data-entry">
+                                <p>We kunnen de gegevens niet automatisch ophalen vanwege CORS-beperkingen.</p>
+                                <p>Je kunt de gegevens handmatig ophalen door:</p>
+                                <ol>
+                                    <li>Klik op deze link om het JSON-bestand te openen: <a href="${dataUrl}" target="_blank">Open JSON-bestand</a></li>
+                                    <li>Kopieer alle inhoud van het bestand (Ctrl+A, Ctrl+C / Cmd+A, Cmd+C)</li>
+                                    <li>Plak de gekopieerde inhoud in het onderstaande veld:</li>
+                                </ol>
+                                <textarea id="manual-json-input" rows="6" placeholder="Plak de JSON-gegevens hier"
+                                    style="width: 100%; margin-top: 10px; padding: 8px; border: 1px solid #ccc; border-radius: 4px;"></textarea>
+                                <button id="process-manual-json" 
+                                    style="margin-top: 10px; padding: 8px 16px; background-color: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">
+                                    Gegevens verwerken
+                                </button>
+                            </div>
+                        `);
+                        
+                        // Add event listener for the process button
+                        document.getElementById('process-manual-json').addEventListener('click', function() {
+                            try {
+                                const manualInput = document.getElementById('manual-json-input').value;
+                                if (manualInput.trim()) {
+                                    try {
+                                        // Attempt to parse the input
+                                        let parsedData;
+                                        
+                                        // Check if it's already a JSON object or if it needs parsing
+                                        if (typeof manualInput === 'object') {
+                                            parsedData = manualInput;
+                                        } else {
+                                            // First attempt - direct JSON parsing
+                                            try {
+                                                parsedData = JSON.parse(manualInput);
+                                            } catch (initialParseError) {
+                                                // If direct parsing fails, try to clean the string
+                                                console.log("Initial parse failed, attempting to clean the input");
+                                                
+                                                // Remove any HTML tags that might have been copied
+                                                const cleanedInput = manualInput
+                                                    .replace(/<\/?[^>]+(>|$)/g, "")  // Remove HTML tags
+                                                    .replace(/&quot;/g, '"')       // Replace HTML entities
+                                                    .replace(/&apos;/g, "'")
+                                                    .replace(/&amp;/g, "&")
+                                                    .trim();
+                                                
+                                                try {
+                                                    parsedData = JSON.parse(cleanedInput);
+                                                } catch (secondParseError) {
+                                                    // Try one more approach for extra safety
+                                                    console.log("Second parse attempt failed, checking for a JSON string within the content");
+                                                    
+                                                    // Look for JSON-like patterns (starting with { and ending with })
+                                                    const jsonMatch = cleanedInput.match(/\{[\s\S]*\}/);
+                                                    if (jsonMatch) {
+                                                        try {
+                                                            parsedData = JSON.parse(jsonMatch[0]);
+                                                        } catch (finalError) {
+                                                            throw new Error("Could not extract valid JSON data from input");
+                                                        }
+                                                    } else {
+                                                        throw new Error("No JSON object found in the input");
+                                                    }
+                                                }
+                                            }
+                                        }
+                                        
+                                        // Validate required fields
+                                        if (!parsedData.gemeente || !parsedData.vergadering || !parsedData.results) {
+                                            alert("De JSON-gegevens missen essentiële velden (gemeente, vergadering, of results)");
+                                            return;
+                                        }
+                                        
+                                        // Process the data
+                                        processJobData(parsedData);
+                                        console.log("Successfully processed manually entered data");
+                                        
+                                        // Hide the manual entry area after successful processing
+                                        const manualArea = document.querySelector('.manual-data-entry');
+                                        if (manualArea) {
+                                            manualArea.style.display = 'none';
+                                        }
+                                    } catch (parseError) {
+                                        console.error("Error parsing manual input:", parseError);
+                                        alert("Ongeldige JSON-gegevens: " + parseError.message);
+                                    }
+                                } else {
+                                    alert("Voer geldige JSON-gegevens in");
+                                }
+                            } catch (error) {
+                                console.error("Error processing manual input:", error);
+                                alert("Er is een fout opgetreden: " + error.message);
+                            }
+                        });
+                        
+                        setLoading(false);
+                        return false;
+                    }
+                    
+                    // Process the job data
+                    processJobData(data);
                     setLoading(false);
                     return true;
                 } catch (error) {
                     console.error('Error loading job results:', error);
                     updateStatusMessage(`Fout bij het ophalen van resultaten: ${error.message}`);
+                    
+                    // Add a retry button
+                    const statusContainer = document.getElementById('status-container');
+                    if (!document.getElementById('retry-button')) {
+                        const retryButton = document.createElement('button');
+                        retryButton.id = 'retry-button';
+                        retryButton.textContent = 'Opnieuw proberen';
+                        retryButton.onclick = checkForJobId;
+                        statusContainer.appendChild(retryButton);
+                    }
+                    
                     setLoading(false);
                     return false;
                 }
@@ -256,7 +368,7 @@
 
         function updateStatusMessage(status) {
             const statusMessage = document.getElementById('status-message');
-            statusMessage.textContent = status;
+            statusMessage.innerHTML = status;
         }
 
         async function pollJobStatus(jobId, gemeente, vergadering) {
@@ -388,6 +500,64 @@
                 console.error('Error:', error);
                 alert('Er is een fout opgetreden bij het verwerken van de documenten');
                 setLoading(false);
+            }
+        }
+
+        // Function to process job data once it's retrieved
+        function processJobData(data) {
+            console.log("Processing job data:", data);
+            
+            // Fill in the gemeente field
+            document.getElementById('gemeente-input').value = data.gemeente;
+            
+            // Create results interface
+            const container = document.getElementById('item-container');
+            container.innerHTML = '';
+            
+            // Show the status container with current progress
+            document.getElementById('status-container').style.display = 'block';
+            
+            if (data.results && data.results.length > 0) {
+                // Filter out the ZIP Archive entry
+                const documents = data.results.filter(item => item.title !== "ZIP Archive of Summaries");
+                
+                // Extract document URLs
+                fetchOriginalDocumentUrls(data.gemeente, data.vergadering)
+                    .then(documentUrls => {
+                        documents.forEach(item => {
+                            // Create items with the original URLs when available
+                            const originalUrl = documentUrls[item.title] || '';
+                            container.appendChild(createItem(item.title, originalUrl, data.vergadering));
+                        });
+                        
+                        // Update summary links
+                        updateSummaryLinks(data.results);
+                        
+                        // Enable download buttons
+                        enableDownloadAllSummaries(data.gemeente, data.vergadering);
+                        
+                        if (documentUrls && Object.keys(documentUrls).length > 0) {
+                            enableDownloadAllOriginals(data.gemeente, data.vergadering);
+                        }
+                    })
+                    .catch(err => {
+                        console.error("Error fetching document URLs:", err);
+                        
+                        // Still show the documents without original links
+                        documents.forEach(item => {
+                            container.appendChild(createItem(item.title, '', data.vergadering));
+                        });
+                        
+                        // Update summary links
+                        updateSummaryLinks(data.results);
+                        
+                        // Enable summary download button
+                        enableDownloadAllSummaries(data.gemeente, data.vergadering);
+                    });
+                
+                // Update progress
+                updateProgressBar(data.progress, data.total);
+                updateStatusMessage(`Status: ${data.status}`);
             }
         }
 
