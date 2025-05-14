@@ -48,8 +48,8 @@
         </div>
         <div id="downloads-section">
             <div class="download-buttons-container">
-                <button id="download-all-originals" disabled>Download all original files</button>
-                <button id="download-all-summaries" disabled>Download all summaries</button>
+                <button id="download-all-originals" disabled>Download alle documenten</button>
+                <button id="download-all-summaries" disabled>Download alle samenvattingen</button>
             </div>
         </div>
         <div id="item-container">
@@ -175,10 +175,10 @@
                     <p class="vergadering">${vergadering}</p>
                 </div>
                 <div class="document-original">
-                    <a href="${url}" target="_blank">Download Original</a>
+                    <a href="${url}" target="_blank">Download Origineel</a>
                 </div>
                 <div class="document-summary">
-                    <a href="#" class="summary-link">Download Summary</a>
+                    <a href="#" class="summary-link">Download Samenvatting</a>
                 </div>
             `;
             return item;
@@ -240,7 +240,7 @@
             const statusContainer = document.getElementById('status-container');
             
             submitButton.disabled = isLoading;
-            buttonText.textContent = isLoading ? 'Bezig met documenten ophalen...' : 'Submit';
+            buttonText.textContent = isLoading ? 'Bezig met documenten ophalen...' : 'Versturen';
             loadingSpinner.style.display = isLoading ? 'inline-block' : 'none';
             statusContainer.style.display = isLoading ? 'block' : 'none';
         }
