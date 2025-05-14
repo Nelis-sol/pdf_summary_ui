@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voorbereiding gemeenteraad</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="main">
+        <h1>Voorbereiding gemeenteraad</h1>
+        <br />
+        <div class="input-section">
+            <div class="prompt-section" style="display: none;">
+                <div class="prompt-header">
+                    <h2>Prompt <span class="muted-text">(optioneel)</span></h2>
+                </div>
+                <div class="prompt-input">
+                    <textarea id="prompt-input" rows="7">Je bent een assistent voor een gemeenteraadslid, Je maakt samenvattingen van documenten die zijn ingezonden voor een gemeenteraad. De samenvatting maak je voor raadsleden die zich gaan voorbereiden op de gemeenteraadsvergadering. Zorg dat je zoveel mogelijk de aanleiding, het doel en de gevraagde acties uit het document gebruikt in de samenvatting. Neem alles op in de samenvatting wat een raadslid nodig zou kunnen hebben om een mening te vormen. Wees beknopt en gebruik alleen informatie uit het originele document om je samenvatting te maken. Als het document een Raadsvoorstel betreft, neem de gevraagde beslissing letterlijk over uit het document.</textarea>
+                </div>
+            </div>
+        </div>
+        <div class="input-section">
+            <h2>Gemeente <span class="muted-text">(verplicht)</span></h2>
+            <div class="municipality-input">
+                <input type="text" placeholder="Bunnik" id="gemeente-input">
+            </div>
+        </div>
+        <div class="input-section">
+            <h2>iBabs url <span class="muted-text">(verplicht)</span></h2>
+            <div class="url-input">
+                <input type="text" placeholder="https://bunnik.bestuurlijkeinformatie.nl/Agenda/Index/becbe158-fef4-45a5-8c37-88c7bf2a043a" id="url-input">
+                <button id="submit-button" onclick="submitForm()">
+                    <span class="button-text">Submit</span>
+                    <span class="loading-spinner" style="display: none;">⏳</span>
+                </button>
+                <button class="toggle-prompt" onclick="togglePrompt()">Toon prompt</button>
+            </div>
+        </div>
+        <div id="status-container" style="display: none;">
+            <div class="status-info">
+                <p id="status-message">Bezig met verwerken van documenten...</p>
+                <div class="progress-container">
+                    <div id="progress-bar" class="progress-bar"></div>
+                </div>
+                <p id="progress-text">0/0 documenten</p>
+            </div>
+        </div>
+        <div id="downloads-section">
+            <div class="download-buttons-container">
+                <button id="download-all-originals" disabled>Download all original files</button>
+                <button id="download-all-summaries" disabled>Download all summaries</button>
+            </div>
+        </div>
+        <div id="item-container">
+            <!-- Items will be added here dynamically -->
+        </div>
+    </div>
+    
+    <script>
+        function togglePrompt() {
+            const promptSection = document.querySelector('.prompt-section');
+            const toggleButton = document.querySelector('.toggle-prompt');
+            if (promptSection.style.display === 'none') {
+                promptSection.style.display = 'block';
+                toggleButton.textContent = 'Verberg prompt';
+            } else {
+                promptSection.style.display = 'none';
+                toggleButton.textContent = 'Toon prompt';
+            }
+        }
+
+        function getUrlParameter(name) {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get(name);
+        }
+
+        async function checkForJobId() {
+            const jobId = getUrlParameter('id');
+            if (jobId) {
+                try {
+                    setLoading(true);
+                    updateStatusMessage("Resultaten ophalen...");
+                    
+                    const response = await fetch(`https://pdf-summary.ams3.digitaloceanspaces.com/${jobId}.json`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Ongeldig job ID of resultaten niet gevonden');
+                    }
+                    
+                    const data = await response.json();
+                    
+                    // Fill in the gemeente field
+                    document.getElementById('gemeente-input').value = data.gemeente;
+                    
+                    // Create results interface
+                    const container = document.getElementById('item-container');
+                    container.innerHTML = '';
+                    
+                    // Show the status container with current progress
+                    document.getElementById('status-container').style.display = 'block';
+                    
+                    if (data.results && data.results.length > 0) {
+                        // Filter out the ZIP Archive entry
+                        const documents = data.results.filter(item => item.title !== "ZIP Archive of Summaries");
+                        
+                        // Extract document URLs
+                        const documentUrls = await fetchOriginalDocumentUrls(data.gemeente, data.vergadering);
+                        
+                        documents.forEach(item => {
+                            // Create items with the original URLs when available
+                            const originalUrl = documentUrls[item.title] || '';
+                            container.appendChild(createItem(item.title, originalUrl, data.vergadering));
+                        });
+                        
+                        // Update progress
+                        updateProgressBar(data.progress, data.total);
+                        updateStatusMessage(`Status: ${data.status}`);
+                        
+                        // Enable download buttons
+                        enableDownloadAllSummaries(data.gemeente, data.vergadering);
+                        
+                        if (documentUrls && Object.keys(documentUrls).length > 0) {
+                            enableDownloadAllOriginals(data.gemeente, data.vergadering);
+                        }
+                        
+                        // Update summary links
+                        updateSummaryLinks(data.results);
+                    }
+                    
+                    setLoading(false);
+                    return true;
+                } catch (error) {
+                    console.error('Error loading job results:', error);
+                    updateStatusMessage(`Fout bij het ophalen van resultaten: ${error.message}`);
+                    setLoading(false);
+                    return false;
+                }
+            }
+            return false;
+        }
+        
+        // Helper function to get original document URLs 
+        async function fetchOriginalDocumentUrls(gemeente, vergadering) {
+            try {
+                const response = await fetch(`https://pdf-summary-7oczl.ondigitalocean.app/fetch-pdfs/cache?gemeente=${encodeURIComponent(gemeente)}&vergadering=${encodeURIComponent(vergadering)}`);
+                
+                if (!response.ok) {
+                    return {};
+                }
+                
+                const data = await response.json();
+                
+                // Create a map of title to URL
+                const urlMap = {};
+                if (data && data.responses) {
+                    data.responses.forEach(item => {
+                        urlMap[item.title] = item.url;
+                    });
+                }
+                
+                return urlMap;
+            } catch (error) {
+                console.error('Error fetching original document URLs:', error);
+                return {};
+            }
+        }
+
+        function createItem(title, url, vergadering) {
+            const item = document.createElement('div');
+            item.className = 'item';
+            item.innerHTML = `
+                <div class="document-title">
+                    <h2>${title}</h2>
+                    <p class="vergadering">${vergadering}</p>
+                </div>
+                <div class="document-original">
+                    <a href="${url}" target="_blank">Download Original</a>
+                </div>
+                <div class="document-summary">
+                    <a href="#" class="summary-link">Download Summary</a>
+                </div>
+            `;
+            return item;
+        }
+
+        function updateSummaryLinks(summaryData) {
+            const items = document.querySelectorAll('.item');
+            items.forEach(item => {
+                const title = item.querySelector('h2').textContent;
+                const summaryLink = item.querySelector('.summary-link');
+                
+                const matchingSummary = summaryData.find(summary => summary.title === title);
+                if (matchingSummary) {
+                    summaryLink.href = matchingSummary.url;
+                    summaryLink.target = '_blank';
+                    summaryLink.classList.add('summary-available');
+                }
+            });
+        }
+
+        function enableDownloadAllOriginals(gemeente, vergadering) {
+            const downloadAllOriginalsBtn = document.getElementById('download-all-originals');
+            downloadAllOriginalsBtn.disabled = false;
+            
+            // Clear previous event listeners
+            const newBtn = downloadAllOriginalsBtn.cloneNode(true);
+            downloadAllOriginalsBtn.parentNode.replaceChild(newBtn, downloadAllOriginalsBtn);
+            
+            newBtn.addEventListener('click', function() {
+                // Get all original file URLs
+                const originalLinks = document.querySelectorAll('.document-original a');
+                
+                // Open each link in a new tab
+                originalLinks.forEach(link => {
+                    window.open(link.href, '_blank');
+                });
+            });
+        }
+
+        function enableDownloadAllSummaries(gemeente, vergadering) {
+            const downloadAllSummariesBtn = document.getElementById('download-all-summaries');
+            downloadAllSummariesBtn.disabled = false;
+            
+            // Clear previous event listeners
+            const newBtn = downloadAllSummariesBtn.cloneNode(true);
+            downloadAllSummariesBtn.parentNode.replaceChild(newBtn, downloadAllSummariesBtn);
+            
+            // Format vergadering name for URL
+            const formattedVergadering = vergadering.replace(/\s+/g, '_');
+            
+            newBtn.addEventListener('click', function() {
+                const downloadUrl = `https://pdf-summary.ams3.digitaloceanspaces.com/${gemeente}/${formattedVergadering}/${gemeente}_${formattedVergadering}_samenvattingen.zip`;
+                window.open(downloadUrl, '_blank');
+            });
+        }
+
+        function setLoading(isLoading) {
+            const submitButton = document.getElementById('submit-button');
+            const buttonText = submitButton.querySelector('.button-text');
+            const loadingSpinner = submitButton.querySelector('.loading-spinner');
+            const statusContainer = document.getElementById('status-container');
+            
+            submitButton.disabled = isLoading;
+            buttonText.textContent = isLoading ? 'Bezig met documenten ophalen...' : 'Submit';
+            loadingSpinner.style.display = isLoading ? 'inline-block' : 'none';
+            statusContainer.style.display = isLoading ? 'block' : 'none';
+        }
+
+        function updateProgressBar(progress, total) {
+            const progressBar = document.getElementById('progress-bar');
+            const progressText = document.getElementById('progress-text');
+            const percentage = total > 0 ? (progress / total) * 100 : 0;
+            
+            progressBar.style.width = `${percentage}%`;
+            progressText.textContent = `${progress}/${total} documenten samengevat`;
+        }
+
+        function updateStatusMessage(status) {
+            const statusMessage = document.getElementById('status-message');
+            statusMessage.textContent = status;
+        }
+
+        async function pollJobStatus(jobId, gemeente, vergadering) {
+            try {
+                const pollInterval = 2500; // 2.5 seconds
+                let isCompleted = false;
+                
+                while (!isCompleted) {
+                    const response = await fetch(`https://pdf-summary-7oczl.ondigitalocean.app/summarize-pdfs/jobs/${jobId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error('Failed to fetch job status');
+                    }
+                    
+                    const data = await response.json();
+                    
+                    // Update progress information
+                    updateProgressBar(data.progress, data.total);
+                    updateStatusMessage(`Status: ${data.status} - Verwerking documenten...`);
+                    
+                    // Check if we have partial results to show
+                    if (data.results && data.results.length > 0) {
+                        updateSummaryLinks(data.results);
+                    }
+                    
+                    // Check if job is completed
+                    if (data.status.toLowerCase() === "completed") {
+                        isCompleted = true;
+                        updateStatusMessage("Alle samenvattingen gemaakt.");
+                        updateSummaryLinks(data.results);
+                        enableDownloadAllSummaries(gemeente, vergadering);
+                        
+                        // Add job ID to URL for easy sharing
+                        const url = new URL(window.location.href);
+                        url.searchParams.set('id', jobId);
+                        window.history.pushState({}, '', url);
+                    } else if (data.status.toLowerCase() === "failed" || data.error) {
+                        isCompleted = true;
+                        updateStatusMessage(`Fout: ${data.error || 'Onbekende fout bij verwerking'}`);
+                    } else {
+                        // Wait before polling again
+                        await new Promise(resolve => setTimeout(resolve, pollInterval));
+                    }
+                }
+            } catch (error) {
+                console.error('Error polling job status:', error);
+                updateStatusMessage(`Fout bij het ophalen van de status: ${error.message}`);
+            } finally {
+                // Keep the progress bar visible but enable the form again
+                const submitButton = document.getElementById('submit-button');
+                submitButton.disabled = false;
+                const buttonText = submitButton.querySelector('.button-text');
+                buttonText.textContent = 'Submit';
+                const loadingSpinner = submitButton.querySelector('.loading-spinner');
+                loadingSpinner.style.display = 'none';
+            }
+        }
+
+        async function submitForm() {
+            const gemeente = document.getElementById('gemeente-input').value;
+            const url = document.getElementById('url-input').value;
+            const prompt = document.getElementById('prompt-input').value;
+
+            if (!gemeente || !url) {
+                alert('Vul zowel de gemeente als de URL in');
+                return;
+            }
+
+            setLoading(true);
+            updateStatusMessage("Documenten ophalen...");
+            updateProgressBar(0, 0);
+
+            try {
+                // First API call to fetch PDFs
+                const response = await fetch('https://pdf-summary-7oczl.ondigitalocean.app/fetch-pdfs', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        gemeente: gemeente,
+                        url: url
+                    })
+                });
+
+                if (!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const data = await response.json();
+                const container = document.getElementById('item-container');
+                
+                // Clear existing items
+                container.innerHTML = '';
+                
+                // Add new items
+                data.responses.forEach(item => {
+                    container.appendChild(createItem(item.title, item.url, data.vergadering));
+                });
+
+                // Enable download all originals button
+                enableDownloadAllOriginals(gemeente, data.vergadering);
+
+                updateStatusMessage("Documenten opgehaald. Bezig met samenvatten...");
+
+                // Start the async summarization job
+                const summarizeResponse = await fetch('https://pdf-summary-7oczl.ondigitalocean.app/summarize-pdfs/jobs', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        gemeente: gemeente,
+                        vergadering: data.vergadering,
+                        prompt: prompt
+                    })
+                });
+
+                if (!summarizeResponse.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const jobData = await summarizeResponse.json();
+                
+                // Start polling for job status
+                pollJobStatus(jobData.job_id, gemeente, data.vergadering);
+
+            } catch (error) {
+                console.error('Error:', error);
+                alert('Er is een fout opgetreden bij het verwerken van de documenten');
+                setLoading(false);
+            }
+        }
+
+        // Check for job ID when page loads
+        document.addEventListener('DOMContentLoaded', checkForJobId);
+    </script>
+</body>
+</html>
