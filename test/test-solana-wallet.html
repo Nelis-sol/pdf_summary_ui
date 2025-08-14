@@ -244,6 +244,16 @@
             <button id="signMessageBtn" onclick="signMessage()" disabled>✍️ Sign Message</button>
         </div>
 
+        <div class="input-group">
+            <label for="recipientAddress">Transfer 1000 Lamports To:</label>
+            <input type="text" id="recipientAddress" placeholder="Enter recipient's public key address" disabled>
+            <small style="color: #666; font-size: 14px;">1000 lamports = 0.000001 SOL</small>
+        </div>
+
+        <div class="button-group">
+            <button id="transferBtn" onclick="transferLamports()" disabled>💸 Transfer 1000 Lamports</button>
+        </div>
+
         <div id="results"></div>
 
         <div>
@@ -292,6 +302,10 @@
                 document.getElementById('disconnectBtn').disabled = !isConnected;
                 document.getElementById('signInBtn').disabled = isConnected; // Sign in is for initial connection
                 document.getElementById('signMessageBtn').disabled = !isConnected;
+                document.getElementById('transferBtn').disabled = !isConnected;
+                
+                // Update input states
+                document.getElementById('recipientAddress').disabled = !isConnected;
             }
         }
 
@@ -395,6 +409,40 @@
             } catch (error) {
                 log(`Message signing failed: ${error.message}`, 'error');
                 showResult('Signing Error', { error: error.message }, true);
+            }
+        }
+
+        async function transferLamports() {
+            if (!walletReady) {
+                log('Solana wallet not ready yet', 'error');
+                return;
+            }
+
+            const recipientAddress = document.getElementById('recipientAddress').value;
+            if (!recipientAddress.trim()) {
+                log('Please enter a recipient address', 'error');
+                return;
+            }
+
+            // Basic validation for Solana address format (44 characters, base58)
+            if (recipientAddress.length !== 44) {
+                log('Invalid recipient address format (should be 44 characters)', 'error');
+                return;
+            }
+
+            try {
+                log(`Transferring 1000 lamports to: ${recipientAddress}`, 'info');
+                const result = await window.solanaWallet.transfer(recipientAddress);
+                log(`Transfer completed successfully`, 'success');
+                showResult('Transfer Completed', {
+                    recipient: result.recipient,
+                    amount: result.amount,
+                    signature: result.signature,
+                    fromPublicKey: window.solanaWallet.getPublicKey()
+                });
+            } catch (error) {
+                log(`Transfer failed: ${error.message}`, 'error');
+                showResult('Transfer Error', { error: error.message }, true);
             }
         }
 
